@@ -60,6 +60,10 @@ on:
       GEMINI_API_KEY:
         required: false
         description: "Google Gemini API key for generating AI fix suggestions"
+      INTERNALAUDITAPP:
+        required: false
+        description: "Alternative secret name for Gemini API key"
+
 
 permissions:
   contents: read
@@ -174,7 +178,7 @@ jobs:
       # ── 9. Generate AI Fix Suggestions (Gemini) ──────────────────────────
       - name: Generate AI Fix Suggestions
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.INTERNALAUDITAPP }}
         run: |
           # Build arguments only for the scanners that actually produced files
           ARGS="--output scan-results/ai-report.md --html scan-results/report.html"
@@ -184,6 +188,7 @@ jobs:
           [ -f scan-results/pytest.txt ] && ARGS="$ARGS --pytest scan-results/pytest.txt"
 
           python scripts/ai_fix_suggestions.py $ARGS
+
 
 
       # ── 10. Post or Update PR Comment ────────────────────────────────────
