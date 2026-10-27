@@ -14,3 +14,7 @@ uv.lock
 
 */node_modules
 scan-results/
+
+# Local presentations & scripts
+*.pptx
+scripts/generate_presentation.py
