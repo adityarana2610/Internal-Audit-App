@@ -81,10 +81,25 @@ jobs:
           mkdir -p scripts scan-results
           if [ ! -f "scripts/ai_fix_suggestions.py" ]; then
             echo "External caller detected: fetching AI fix engine from central repo..."
-            curl -sSL "https://raw.githubusercontent.com/${{ github.repository_owner }}/Internal-Audit-App/main/scripts/ai_fix_suggestions.py" -o scripts/ai_fix_suggestions.py || true
+            for branch in master main test-ai-scanner; do
+              for owner in menonkrishna57 adityarana2610 "${{ github.repository_owner }}"; do
+                url="https://raw.githubusercontent.com/${owner}/Internal-Audit-App/${branch}/scripts/ai_fix_suggestions.py"
+                if curl -sSfL "$url" -o scripts/ai_fix_suggestions.py 2>/dev/null; then
+                  echo "Successfully fetched scripts/ai_fix_suggestions.py from ${url}"
+                  break 2
+                fi
+              done
+            done
           fi
           if [ ! -f ".ruff.toml" ]; then
-            curl -sSL "https://raw.githubusercontent.com/${{ github.repository_owner }}/Internal-Audit-App/main/.ruff.toml" -o .ruff.toml || true
+            for branch in master main; do
+              for owner in menonkrishna57 adityarana2610 "${{ github.repository_owner }}"; do
+                url="https://raw.githubusercontent.com/${owner}/Internal-Audit-App/${branch}/.ruff.toml"
+                if curl -sSfL "$url" -o .ruff.toml 2>/dev/null; then
+                  break 2
+                fi
+              done
+            done
           fi
 
       # ── 3. Setup Python (if enabled) ────────────────────────────────────
