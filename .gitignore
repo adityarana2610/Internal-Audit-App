@@ -13,3 +13,4 @@ uv.lock
 .vscode
 
 */node_modules
+scan-results/

@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     supabase_db_url: str = Field(..., validation_alias="SUPABASE_DB_URL", description="Direct Postgres connection string")
     supabase_project_ref: str = Field(default="", validation_alias="SUPABASE_PROJECT_REF", description="Supabase project ref")
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
+    api_auth_token: str = Field(default="vault-audit-secret-token", validation_alias="API_AUTH_TOKEN", description="Secret bearer token protecting all audit & policy operations.")
     ai_provider: str = Field(default="gemini", validation_alias="AI_PROVIDER")
     ollama_base_url: str = Field(default="http://localhost:11434", validation_alias="OLLAMA_BASE_URL")
     ollama_model: str = Field(default="phi4-mini", validation_alias="OLLAMA_MODEL")
