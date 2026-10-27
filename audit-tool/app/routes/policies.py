@@ -33,7 +33,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, Request
 from fastapi.responses import JSONResponse
 import yaml
 

@@ -75,15 +75,36 @@ function makeRunId() {
 
 // ── Removed SVG roughen filter (simplified badge design) ──────────────────────
 
-// ── HTML Sanitizer Helper (prevents XSS) ────────────────────────────────────
-const AUTH_TOKEN = import.meta.env?.VITE_API_AUTH_TOKEN || 'vault-audit-secret-token'
+// ── HTML Sanitizer & Auth Helpers (prevents XSS & secures API) ─────────────
+function getAuthToken() {
+  return sessionStorage.getItem('audit_auth_token') || localStorage.getItem('audit_auth_token') || ''
+}
 
-function apiFetch(url, options = {}) {
+function setAuthToken(token, persist = false) {
+  if (token) {
+    sessionStorage.setItem('audit_auth_token', token)
+    if (persist) {
+      localStorage.setItem('audit_auth_token', token)
+    } else {
+      localStorage.removeItem('audit_auth_token')
+    }
+  } else {
+    sessionStorage.removeItem('audit_auth_token')
+    localStorage.removeItem('audit_auth_token')
+  }
+}
+
+async function apiFetch(url, options = {}) {
+  const token = getAuthToken()
   const headers = {
-    'Authorization': `Bearer ${AUTH_TOKEN}`,
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
     ...(options.headers || {})
   }
-  return fetch(url, { ...options, headers })
+  const res = await fetch(url, { ...options, headers })
+  if (res.status === 401) {
+    window.dispatchEvent(new CustomEvent('audit_auth_required'))
+  }
+  return res
 }
 
 function safeMarkdown(md) {
@@ -107,7 +128,7 @@ const NAV_ITEMS = [
   { id: 'settings',  label: 'Settings',  Icon: Icons.Settings  },
 ]
 
-function NavRail({ active, setActive }) {
+function NavRail({ active, setActive, onOpenAuth }) {
   return (
     <nav
       className="nav-rail"
@@ -162,6 +183,20 @@ function NavRail({ active, setActive }) {
             <span>{label}</span>
           </button>
         ))}
+      </div>
+
+      {/* Auth Token Button */}
+      <div style={{ padding: '0 12px 10px' }}>
+        <button
+          type="button"
+          className="nav-item"
+          onClick={onOpenAuth}
+          style={{ width: '100%', justifyContent: 'flex-start', color: '#B08F4F', border: '1px dashed #2a3e52' }}
+          title="Manage API Authentication Token"
+        >
+          <span style={{ fontSize: '0.9rem' }}>🔑</span>
+          <span>Access Token</span>
+        </button>
       </div>
 
       {/* Version footer */}
@@ -1396,6 +1431,200 @@ function SettingsView() {
   )
 }
 
+// ── AuthModal Component ───────────────────────────────────────────────────────
+function AuthModal({ isOpen, onClose, onAuthenticated }) {
+  const [tokenInput, setTokenInput] = useState(getAuthToken())
+  const [remember, setRemember] = useState(Boolean(localStorage.getItem('audit_auth_token')))
+  const [validating, setValidating] = useState(false)
+  const [authError, setAuthError] = useState('')
+
+  if (!isOpen) return null
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    const trimmed = tokenInput.trim()
+    if (!trimmed) {
+      setAuthError('Please enter a valid Bearer token.')
+      return
+    }
+    setValidating(true)
+    setAuthError('')
+    try {
+      const res = await fetch('/audits/settings', {
+        headers: {
+          'Authorization': `Bearer ${trimmed}`
+        }
+      })
+      if (res.ok) {
+        setAuthToken(trimmed, remember)
+        onAuthenticated()
+        onClose()
+      } else if (res.status === 401) {
+        setAuthError('Unauthorized: Token was rejected by the server.')
+      } else if (res.status === 500) {
+        const data = await res.json().catch(() => ({}))
+        setAuthError(data.detail || 'Server misconfiguration: API_AUTH_TOKEN is not configured.')
+      } else {
+        setAuthError(`Server returned HTTP ${res.status}.`)
+      }
+    } catch {
+      setAuthError('Could not reach API server. Ensure backend is running.')
+    } finally {
+      setValidating(false)
+    }
+  }
+
+  return (
+    <div style={{
+      position: 'fixed',
+      inset: 0,
+      backgroundColor: 'rgba(23, 20, 16, 0.75)',
+      backdropFilter: 'blur(4px)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 9999,
+      padding: 16
+    }}>
+      <div style={{
+        background: '#FAF6ED',
+        borderRadius: 8,
+        border: '1px solid #C7BE9F',
+        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.25)',
+        width: '100%',
+        maxWidth: 440,
+        padding: 28,
+        boxSizing: 'border-box'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <div style={{
+            width: 40,
+            height: 40,
+            borderRadius: '50%',
+            background: '#211C16',
+            color: '#DCD3B8',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '1.2rem'
+          }}>
+            🔒
+          </div>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '1.25rem', fontFamily: 'Newsreader, Georgia, serif', color: '#211C16' }}>
+              Authentication Required
+            </h2>
+            <p style={{ margin: 0, fontSize: '0.8rem', color: '#7a6a55', fontFamily: 'Inter, sans-serif' }}>
+              Bank Operational Audit Tool
+            </p>
+          </div>
+        </div>
+
+        <p style={{ fontSize: '0.875rem', color: '#3d322a', lineHeight: 1.5, marginBottom: 16, fontFamily: 'Inter, sans-serif' }}>
+          Sensitive audit rules, policy extraction, and compliance reports are protected. Please provide your API Bearer Token to proceed.
+        </p>
+
+        {authError && (
+          <div style={{
+            backgroundColor: '#FBEBE8',
+            border: '1px solid #F1AEA6',
+            color: '#A23B2C',
+            borderRadius: 4,
+            padding: '8px 12px',
+            fontSize: '0.825rem',
+            marginBottom: 16,
+            fontFamily: 'Inter, sans-serif'
+          }}>
+            {authError}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#211C16', marginBottom: 4, fontFamily: 'Inter, sans-serif' }}>
+              API Bearer Token
+            </label>
+            <input
+              type="password"
+              placeholder="Paste secret token..."
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              autoFocus
+              style={{
+                width: '100%',
+                padding: '9px 12px',
+                borderRadius: 4,
+                border: '1px solid #C7BE9F',
+                backgroundColor: '#FFFFFF',
+                color: '#211C16',
+                fontFamily: 'monospace',
+                fontSize: '0.9rem',
+                boxSizing: 'border-box'
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+            <input
+              type="checkbox"
+              id="remember_token"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              style={{ cursor: 'pointer' }}
+            />
+            <label htmlFor="remember_token" style={{ fontSize: '0.8rem', color: '#5C5042', cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}>
+              Remember token in this browser (localStorage)
+            </label>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            {getAuthToken() && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthToken('')
+                  setTokenInput('')
+                  setAuthError('')
+                }}
+                style={{
+                  padding: '9px 14px',
+                  background: 'transparent',
+                  color: '#A23B2C',
+                  border: '1px solid #F1AEA6',
+                  borderRadius: 4,
+                  fontFamily: 'Inter, sans-serif',
+                  fontSize: '0.85rem',
+                  cursor: 'pointer'
+                }}
+              >
+                Clear Token
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={validating}
+              style={{
+                padding: '9px 18px',
+                background: '#211C16',
+                color: '#DCD3B8',
+                border: 'none',
+                borderRadius: 4,
+                fontFamily: 'Inter, sans-serif',
+                fontWeight: 600,
+                fontSize: '0.875rem',
+                cursor: validating ? 'not-allowed' : 'pointer',
+                opacity: validating ? 0.7 : 1
+              }}
+            >
+              {validating ? 'Verifying...' : 'Unlock Dashboard'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ── Root App ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [activeNav, setActiveNav] = useState('dashboard')
@@ -1406,6 +1635,13 @@ export default function App() {
   const [runId]                   = useState(makeRunId)
 
   const [health, setHealth]       = useState({ api: 'checking', db: 'checking' })
+  const [showAuthModal, setShowAuthModal] = useState(!getAuthToken())
+
+  useEffect(() => {
+    const handleAuthReq = () => setShowAuthModal(true)
+    window.addEventListener('audit_auth_required', handleAuthReq)
+    return () => window.removeEventListener('audit_auth_required', handleAuthReq)
+  }, [])
 
   // Read environment from Vite env or fallback
   const env = import.meta.env.VITE_ENV ?? 'development'
@@ -1464,7 +1700,8 @@ export default function App() {
     <>
       <div style={{ display: 'flex', minHeight: '100vh' }}>
         {/* Fixed left nav rail */}
-        <NavRail active={activeNav} setActive={setActiveNav} />
+        <NavRail active={activeNav} setActive={setActiveNav} onOpenAuth={() => setShowAuthModal(true)} />
+        <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} onAuthenticated={runAudit} />
 
         {/* Main scrollable content area (offset by nav width on desktop) */}
         <div
