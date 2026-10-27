@@ -18,7 +18,11 @@ on:
   pull_request:
     branches: [main, master]
 
-  # 2. Allows manual trigger from GitHub UI
+  # 2. Triggers automatically on direct pushes
+  push:
+    branches: [main, master]
+
+  # 3. Allows manual trigger from GitHub UI
   workflow_dispatch:
 
   # 3. Allows ANY other repository to call this workflow with one line
@@ -75,31 +79,23 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. Setup CI tools & script ───────────────────────────────────────
-      # If called from an external repository that doesn't have the script, fetch it
-      - name: Ensure CI scripts & config are present
+      # If called from an external repository that doesn't have the script, check it out natively
+      - name: Fetch scanner tools from central repository
+        if: ${{ !hashFiles('scripts/ai_fix_suggestions.py') }}
+        uses: actions/checkout@v4
+        with:
+          repository: menonkrishna57/Internal-Audit-App
+          ref: master
+          path: .scanner-tools
+
+      - name: Setup scripts and config
         run: |
           mkdir -p scripts scan-results
-          if [ ! -f "scripts/ai_fix_suggestions.py" ]; then
-            echo "External caller detected: fetching AI fix engine from central repo..."
-            for branch in master main test-ai-scanner; do
-              for owner in menonkrishna57 adityarana2610 "${{ github.repository_owner }}"; do
-                url="https://raw.githubusercontent.com/${owner}/Internal-Audit-App/${branch}/scripts/ai_fix_suggestions.py"
-                if curl -sSfL "$url" -o scripts/ai_fix_suggestions.py 2>/dev/null; then
-                  echo "Successfully fetched scripts/ai_fix_suggestions.py from ${url}"
-                  break 2
-                fi
-              done
-            done
+          if [ -d ".scanner-tools/scripts" ]; then
+            cp -r .scanner-tools/scripts/* scripts/
           fi
-          if [ ! -f ".ruff.toml" ]; then
-            for branch in master main; do
-              for owner in menonkrishna57 adityarana2610 "${{ github.repository_owner }}"; do
-                url="https://raw.githubusercontent.com/${owner}/Internal-Audit-App/${branch}/.ruff.toml"
-                if curl -sSfL "$url" -o .ruff.toml 2>/dev/null; then
-                  break 2
-                fi
-              done
-            done
+          if [ -f ".scanner-tools/.ruff.toml" ] && [ ! -f ".ruff.toml" ]; then
+            cp .scanner-tools/.ruff.toml .ruff.toml
           fi
 
       # ── 3. Setup Python (if enabled) ────────────────────────────────────
@@ -197,6 +193,11 @@ jobs:
           [ -f scan-results/pytest.txt ] && ARGS="$ARGS --pytest scan-results/pytest.txt"
 
           python scripts/ai_fix_suggestions.py $ARGS
+
+          # Render report directly on GitHub Actions web page (zero zip download needed!)
+          if [ -f "scan-results/ai-report.md" ]; then
+            cat scan-results/ai-report.md >> $GITHUB_STEP_SUMMARY
+          fi
 
 
 
