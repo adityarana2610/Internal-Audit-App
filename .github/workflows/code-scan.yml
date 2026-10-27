@@ -1,0 +1,282 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Multi-Repository Reusable CI/CD Code Scanner & AI Fix Pipeline
+# ─────────────────────────────────────────────────────────────────────────────
+#  This workflow can run in TWO ways:
+#
+#  1. DIRECTLY in this repository:
+#     - Triggers automatically on Pull Requests to main/master.
+#
+#  2. AS A REUSABLE WORKFLOW from ANY other GitHub repository (Option B):
+#     - Another repo calls it with `uses: <owner>/<repo>/.github/workflows/code-scan.yml@main`
+#     - Configurable for Python-only, JS-only, or full-stack projects.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "Code Scan & AI Fix Suggestions"
+
+on:
+  # 1. Triggers directly in this repo on PRs
+  pull_request:
+    branches: [main, master]
+
+  # 2. Allows manual trigger from GitHub UI
+  workflow_dispatch:
+
+  # 3. Allows ANY other repository to call this workflow with one line
+  workflow_call:
+    inputs:
+      scan_python:
+        type: boolean
+        default: true
+        description: "Run Python linting (Ruff) and security check (Bandit)"
+      scan_javascript:
+        type: boolean
+        default: true
+        description: "Run JavaScript linting (ESLint)"
+      run_tests:
+        type: boolean
+        default: true
+        description: "Run test suite (Pytest)"
+      python_dir:
+        type: string
+        default: "audit-tool"
+        description: "Path to Python code (use '.' if in repository root)"
+      javascript_dir:
+        type: string
+        default: "audit-dashboard"
+        description: "Path to JavaScript/React code"
+      python_version:
+        type: string
+        default: "3.11"
+        description: "Python version to use"
+      node_version:
+        type: string
+        default: "18"
+        description: "Node.js version to use"
+      fail_on_errors:
+        type: boolean
+        default: true
+        description: "Fail the job if scanners detect errors"
+    secrets:
+      GEMINI_API_KEY:
+        required: false
+        description: "Google Gemini API key for generating AI fix suggestions"
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  scan-and-suggest:
+    name: "Scan Code & Generate Fixes"
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout repository ───────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Setup CI tools & script ───────────────────────────────────────
+      # If called from an external repository that doesn't have the script, fetch it
+      - name: Ensure CI scripts & config are present
+        run: |
+          mkdir -p scripts scan-results
+          if [ ! -f "scripts/ai_fix_suggestions.py" ]; then
+            echo "External caller detected: fetching AI fix engine from central repo..."
+            curl -sSL "https://raw.githubusercontent.com/${{ github.repository_owner }}/Internal-Audit-App/main/scripts/ai_fix_suggestions.py" -o scripts/ai_fix_suggestions.py || true
+          fi
+          if [ ! -f ".ruff.toml" ]; then
+            curl -sSL "https://raw.githubusercontent.com/${{ github.repository_owner }}/Internal-Audit-App/main/.ruff.toml" -o .ruff.toml || true
+          fi
+
+      # ── 3. Setup Python (if enabled) ────────────────────────────────────
+      - name: Setup Python
+        if: ${{ github.event_name != 'workflow_call' || inputs.scan_python || inputs.run_tests }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version || '3.11' }}
+
+      - name: Install Python tools
+        if: ${{ github.event_name != 'workflow_call' || inputs.scan_python || inputs.run_tests }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff bandit pytest httpx
+
+          # Install project requirements if present
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt || true
+          elif [ -f "${{ inputs.python_dir || 'audit-tool' }}/requirements.txt" ]; then
+            pip install -r "${{ inputs.python_dir || 'audit-tool' }}/requirements.txt" || true
+          fi
+
+      # ── 4. Setup Node.js (if enabled) ───────────────────────────────────
+      - name: Setup Node.js
+        if: ${{ github.event_name != 'workflow_call' || inputs.scan_javascript }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version || '18' }}
+
+      - name: Install JavaScript tools
+        if: ${{ github.event_name != 'workflow_call' || inputs.scan_javascript }}
+        run: |
+          JS_PATH="${{ inputs.javascript_dir || 'audit-dashboard' }}"
+          if [ -d "$JS_PATH" ]; then
+            cd "$JS_PATH"
+            if [ -f "package.json" ]; then
+              npm install || true
+            fi
+            npm install eslint eslint-plugin-react eslint-plugin-react-hooks --save-dev || true
+          fi
+
+      # ── 5. Run Python Linter (Ruff) ─────────────────────────────────────
+      - name: Run Ruff (Python linter)
+        if: ${{ github.event_name != 'workflow_call' || inputs.scan_python }}
+        run: |
+          PY_PATH="${{ inputs.python_dir || 'audit-tool' }}"
+          echo "Scanning Python directory: $PY_PATH"
+          ruff check "$PY_PATH" --output-format=text > scan-results/ruff.txt 2>&1 || true
+          cat scan-results/ruff.txt
+
+      # ── 6. Run Bandit (Python Security Scanner) ──────────────────────────
+      - name: Run Bandit (Security scanner)
+        if: ${{ github.event_name != 'workflow_call' || inputs.scan_python }}
+        run: |
+          PY_PATH="${{ inputs.python_dir || 'audit-tool' }}"
+          bandit -r "$PY_PATH" -f txt --severity-level medium > scan-results/bandit.txt 2>&1 || true
+          cat scan-results/bandit.txt
+
+      # ── 7. Run ESLint (JavaScript Linter) ────────────────────────────────
+      - name: Run ESLint (JavaScript linter)
+        if: ${{ github.event_name != 'workflow_call' || inputs.scan_javascript }}
+        run: |
+          JS_PATH="${{ inputs.javascript_dir || 'audit-dashboard' }}"
+          if [ -d "$JS_PATH" ]; then
+            cd "$JS_PATH"
+            npx eslint src/ --format compact > ../scan-results/eslint.txt 2>&1 || true
+            cd ..
+          fi
+          if [ -f scan-results/eslint.txt ]; then
+            cat scan-results/eslint.txt
+          fi
+
+      # ── 8. Run Pytest (Unit tests) ──────────────────────────────────────
+      - name: Run Pytest
+        if: ${{ github.event_name != 'workflow_call' || inputs.run_tests }}
+        env:
+          SUPABASE_DB_URL: "postgresql+psycopg://test:test@localhost:5432/test"
+        run: |
+          PY_PATH="${{ inputs.python_dir || 'audit-tool' }}"
+          if [ -d "$PY_PATH/tests" ] || [ -d "tests" ]; then
+            python -m pytest "$PY_PATH" --tb=short -q > scan-results/pytest.txt 2>&1 || true
+            cat scan-results/pytest.txt
+          fi
+
+      # ── 9. Generate AI Fix Suggestions (Gemini) ──────────────────────────
+      - name: Generate AI Fix Suggestions
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          # Build arguments only for the scanners that actually produced files
+          ARGS="--output scan-results/ai-report.md --html scan-results/report.html"
+          [ -f scan-results/ruff.txt ]   && ARGS="$ARGS --ruff scan-results/ruff.txt"
+          [ -f scan-results/bandit.txt ] && ARGS="$ARGS --bandit scan-results/bandit.txt"
+          [ -f scan-results/eslint.txt ] && ARGS="$ARGS --eslint scan-results/eslint.txt"
+          [ -f scan-results/pytest.txt ] && ARGS="$ARGS --pytest scan-results/pytest.txt"
+
+          python scripts/ai_fix_suggestions.py $ARGS
+
+
+      # ── 10. Post or Update PR Comment ────────────────────────────────────
+      - name: Post Scan Report on Pull Request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = 'scan-results/ai-report.md';
+
+            if (!fs.existsSync(reportPath)) {
+              console.log('No report file found. Skipping comment.');
+              return;
+            }
+
+            const report = fs.readFileSync(reportPath, 'utf8');
+            const marker = '<!-- code-scan-ai-report -->';
+            const body = `${marker}\n${report}\n\n*Commit: \`${context.sha.substring(0, 7)}\`*`;
+
+            const prNumber = context.payload.pull_request
+              ? context.payload.pull_request.number
+              : context.issue.number;
+
+            if (!prNumber) {
+              console.log('Not a pull request. Skipping comment.');
+              return;
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body,
+              });
+              console.log(`Updated existing comment #${existing.id}`);
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: body,
+              });
+              console.log('Created new PR comment');
+            }
+
+      # ── 11. Upload scan results as build artifact ─────────────────────────
+      - name: Upload Report Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-scan-report
+          path: scan-results/
+          retention-days: 14
+
+      # ── 12. Evaluate Failure Threshold ───────────────────────────────────
+      - name: Enforce Quality Gate
+        if: ${{ github.event_name != 'workflow_call' || inputs.fail_on_errors != false }}
+        run: |
+          FAILED=0
+          if [ -s scan-results/ruff.txt ] && grep -qE "^.+:[0-9]+:[0-9]+:" scan-results/ruff.txt; then
+            echo "❌ Ruff detected lint errors."
+            FAILED=1
+          fi
+          if [ -s scan-results/bandit.txt ] && grep -q "Severity:" scan-results/bandit.txt; then
+            echo "❌ Bandit detected security issues."
+            FAILED=1
+          fi
+          if [ -s scan-results/eslint.txt ] && grep -qiE "(error|warning)" scan-results/eslint.txt; then
+            echo "❌ ESLint detected JavaScript errors."
+            FAILED=1
+          fi
+          if [ -s scan-results/pytest.txt ] && grep -q "FAILED" scan-results/pytest.txt; then
+            echo "❌ Pytest detected failing tests."
+            FAILED=1
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "=========================================================="
+            echo "  Scan identified issues! Review the PR comment or the    "
+            echo "  uploaded artifact for AI explanations and exact fixes.  "
+            echo "=========================================================="
+            exit 1
+          else
+            echo "✅ Quality Gate passed cleanly."
+          fi

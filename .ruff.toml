@@ -1,0 +1,32 @@
+# Ruff linter configuration for the Internal Audit App
+# Docs: https://docs.astral.sh/ruff/
+
+[lint]
+# Enable a broad set of rules
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (unused imports, undefined names, etc.)
+    "I",    # isort (import ordering)
+    "S",    # bandit-equivalent security checks (flake8-bandit)
+    "B",    # bugbear (common Python gotchas)
+    "SIM",  # simplify (code simplification suggestions)
+    "UP",   # pyupgrade (modernize Python syntax)
+]
+
+# Ignore rules that conflict with this project's style
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "S101",   # assert usage (fine in tests)
+    "S608",   # SQL injection via string formatting (intentional in audit engine)
+    "B008",   # function call in default argument (FastAPI Depends pattern)
+]
+
+[lint.per-file-ignores]
+"audit-tool/tests/*" = ["S101"]  # Allow assert in tests
+
+# Target Python 3.11 (matches Dockerfile)
+target-version = "py311"
+
+# Only scan the audit-tool backend
+include = ["audit-tool/**/*.py"]
