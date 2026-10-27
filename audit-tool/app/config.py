@@ -30,6 +30,27 @@ class Settings(BaseSettings):
             raise ValueError("SUPABASE_DB_URL must be set to a real connection string")
         return v
 
+    @field_validator("api_auth_token")
+    @classmethod
+    def validate_auth_token(cls, v):
+        disallowed = {
+            "your-secure-secret-token-here",
+            "vault-audit-secret-token",
+            "[generate-a-unique-secret-token]",
+            "change-me",
+            "changeme",
+            "secret",
+            "token",
+            "admin",
+            "password",
+        }
+        if v and (v.strip().lower() in disallowed or "[GENERATE" in v or "[YOUR" in v):
+            raise ValueError(
+                f"Insecure placeholder API_AUTH_TOKEN detected ('{v}'). "
+                "You must replace example placeholders with a unique, genuine secret token."
+            )
+        return v
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
