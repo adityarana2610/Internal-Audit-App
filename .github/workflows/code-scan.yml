@@ -143,7 +143,7 @@ jobs:
         run: |
           PY_PATH="${{ inputs.python_dir || 'audit-tool' }}"
           echo "Scanning Python directory: $PY_PATH"
-          ruff check "$PY_PATH" --output-format=text > scan-results/ruff.txt 2>&1 || true
+          ruff check "$PY_PATH" > scan-results/ruff.txt 2>&1 || true
           cat scan-results/ruff.txt
 
       # ── 6. Run Bandit (Python Security Scanner) ──────────────────────────

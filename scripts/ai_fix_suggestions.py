@@ -216,17 +216,32 @@ def detect_issues(tool_name: str, output: str) -> tuple[bool, int, list[str]]:
     count = 0
     tool = tool_name.lower()
 
-    if "ruff" in tool:
-        # Matches typical ruff outputs: "path/file.py:line:col: RULE message"
-        count = sum(1 for line in filtered if (": " in line and ":" in line.split()[0]))
-    elif "bandit" in tool:
+    if "bandit" in tool:
         # Bandit reports severity per issue: ">> Issue: [...]" or "Severity: High"
         count = sum(1 for line in filtered if line.startswith(">> Issue:") or "Severity:" in line)
+        if count == 0:
+            return False, 0, []
+        return True, count, [line for line in filtered if line.startswith(">> Issue:") or "Severity:" in line][:10]
+
+    elif "ruff" in tool:
+        # Matches typical ruff outputs: "path/file.py:line:col: RULE message"
+        count = sum(1 for line in filtered if (": " in line and ":" in line.split()[0]))
+        has_cli_err = any("error:" in line.lower() or "syntaxerror" in line.lower() for line in filtered)
+        if count == 0 and not has_cli_err:
+            return False, 0, []
+        return True, max(count, 1), filtered[:10]
+
     elif "eslint" in tool:
-        # ESLint compact format: "file: line x, col y, Error/Warning - ..."
         count = sum(1 for line in filtered if "error" in line.lower() or "warning" in line.lower())
+        if count == 0:
+            return False, 0, []
+        return True, count, filtered[:10]
+
     elif "pytest" in tool:
         count = sum(1 for line in filtered if line.startswith("FAILED ") or " ERROR " in line)
+        if count == 0:
+            return False, 0, []
+        return True, count, filtered[:10]
 
     count = max(count, 1 if filtered else 0)
     return True, count, filtered[:10]
