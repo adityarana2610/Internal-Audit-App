@@ -46,7 +46,10 @@ from app.policy_engine.vector_store import (
 
 logger = logging.getLogger("audit_tool.routes.policies")
 
-router = APIRouter()
+from app.auth import require_auth
+
+router = APIRouter(dependencies=[Depends(require_auth)])
+
 
 _RULES_DIR = None
 _DRAFT_DIR = None
@@ -89,9 +92,16 @@ async def upload_policy(
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
-    file_bytes = await file.read()
+    # Enforce maximum 25MB file upload limit to prevent memory exhaustion
+    MAX_POLICY_PDF_BYTES = 25 * 1024 * 1024
+    file_bytes = await file.read(MAX_POLICY_PDF_BYTES + 1)
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(file_bytes) > MAX_POLICY_PDF_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds maximum allowed size of {MAX_POLICY_PDF_BYTES // (1024 * 1024)}MB."
+        )
 
     logger.info(f"Received policy PDF '{file.filename}' ({len(file_bytes):,} bytes).")
 

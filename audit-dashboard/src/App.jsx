@@ -75,6 +75,28 @@ function makeRunId() {
 
 // ── Removed SVG roughen filter (simplified badge design) ──────────────────────
 
+// ── HTML Sanitizer Helper (prevents XSS) ────────────────────────────────────
+const AUTH_TOKEN = import.meta.env?.VITE_API_AUTH_TOKEN || 'vault-audit-secret-token'
+
+function apiFetch(url, options = {}) {
+  const headers = {
+    'Authorization': `Bearer ${AUTH_TOKEN}`,
+    ...(options.headers || {})
+  }
+  return fetch(url, { ...options, headers })
+}
+
+function safeMarkdown(md) {
+  if (!md) return ''
+  if (window.DOMPurify && window.marked) {
+    return window.DOMPurify.sanitize(window.marked.parse(md))
+  }
+  // Bulletproof fallback if DOMPurify fails to load: escape all HTML tags to prevent XSS
+  const div = document.createElement('div')
+  div.textContent = md
+  return '<p style="white-space: pre-wrap;">' + div.innerHTML + '</p>'
+}
+
 // ── NavRail ───────────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', Icon: Icons.Dashboard },
@@ -316,7 +338,7 @@ function FindingTabs({ finding, rule }) {
           color: '#3d322a',
         }}>
           {narrative
-            ? <div className="markdown-body" dangerouslySetInnerHTML={{ __html: window.marked ? window.marked.parse(narrative) : narrative }} />
+            ? <div className="markdown-body" dangerouslySetInnerHTML={{ __html: safeMarkdown(narrative) }} />
             : (
               <p style={{ color: '#7a6a55', fontStyle: 'italic' }}>
                 Narrative not yet available. The AI summarizer may still be processing — re-run the audit to request an updated report.
@@ -806,7 +828,7 @@ function RulesView({ results, onDeleteRule, onRuleUpdated }) {
     if (!window.confirm(`Delete rule "${ruleTitle}"?\n\nThis will permanently remove the rule file. It will no longer run in future audits.`)) return
     setDeletingId(ruleId)
     try {
-      const res = await fetch(`/audits/rules/${ruleId}`, { method: 'DELETE' })
+      const res = await apiFetch(`/audits/rules/${ruleId}`, { method: 'DELETE' })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
         alert(`Failed to delete rule: ${err.detail ?? 'Unknown error'}`)
@@ -826,7 +848,7 @@ function RulesView({ results, onDeleteRule, onRuleUpdated }) {
     try {
       const endpoint = isNew ? '/audits/rules' : `/audits/rules/${editingRule.rule_id}`
       const method = isNew ? 'POST' : 'PUT'
-      const res = await fetch(endpoint, {
+      const res = await apiFetch(endpoint, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedData)
@@ -976,7 +998,7 @@ function ReportsView({ runId }) {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('/audits/report?format=json')
+      const res = await apiFetch('/audits/report?format=json')
       if (!res.ok) throw new Error('Failed to generate report')
       const data = await res.json()
       setReport(data)
@@ -1027,7 +1049,7 @@ function ReportsView({ runId }) {
           <h2 style={{ fontFamily: 'Newsreader, Georgia, serif', fontSize: '1.4rem', marginBottom: 12 }}>Executive Summary</h2>
           <div className="markdown-body" style={{ fontFamily: 'Inter, sans-serif', fontSize: '0.9rem', lineHeight: 1.6, marginBottom: 32, width: '100%', boxSizing: 'border-box', overflowWrap: 'break-word', wordBreak: 'break-word' }}>
             {report.narrative 
-              ? <div dangerouslySetInnerHTML={{ __html: window.marked ? window.marked.parse(report.narrative) : report.narrative }} />
+              ? <div dangerouslySetInnerHTML={{ __html: safeMarkdown(report.narrative) }} />
               : <p>No narrative generated.</p>
             }
           </div>
@@ -1118,7 +1140,7 @@ function PoliciesView() {
 
   const fetchDrafts = useCallback(async () => {
     try {
-      const res = await fetch('/policies/rules/draft')
+      const res = await apiFetch('/policies/rules/draft')
       if (res.ok) {
         const data = await res.json()
         setDrafts(data.draft_rules || [])
@@ -1147,7 +1169,7 @@ function PoliciesView() {
     const formData = new FormData()
     formData.append('file', file)
     try {
-      const res = await fetch('/policies/upload', {
+      const res = await apiFetch('/policies/upload', {
         method: 'POST',
         body: formData,
       })
@@ -1164,7 +1186,7 @@ function PoliciesView() {
 
   const handleApprove = async (ruleId) => {
     try {
-      const res = await fetch(`/policies/rules/draft/${ruleId}/approve`, { method: 'POST' })
+      const res = await apiFetch(`/policies/rules/draft/${ruleId}/approve`, { method: 'POST' })
       if (res.ok) {
         setDrafts(prev => prev.filter(d => d.id !== ruleId))
       }
@@ -1175,7 +1197,7 @@ function PoliciesView() {
 
   const handleReject = async (ruleId) => {
     try {
-      const res = await fetch(`/policies/rules/draft/${ruleId}/reject`, { method: 'DELETE' })
+      const res = await apiFetch(`/policies/rules/draft/${ruleId}/reject`, { method: 'DELETE' })
       if (res.ok) {
         setDrafts(prev => prev.filter(d => d.id !== ruleId))
       }
@@ -1187,7 +1209,7 @@ function PoliciesView() {
   const handleSaveDraft = async (updatedData) => {
     setSavingId(editingRule.id)
     try {
-      const res = await fetch(`/policies/rules/draft/${editingRule.id}`, {
+      const res = await apiFetch(`/policies/rules/draft/${editingRule.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedData)
@@ -1287,7 +1309,7 @@ function SettingsView() {
   const [msg, setMsg] = useState('')
 
   useEffect(() => {
-    fetch('/audits/settings')
+    apiFetch('/audits/settings')
       .then(r => r.json())
       .then(data => {
         setConfig(data)
@@ -1305,7 +1327,7 @@ function SettingsView() {
     setSaving(true)
     setMsg('')
     try {
-      const res = await fetch('/audits/settings', {
+      const res = await apiFetch('/audits/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
@@ -1390,7 +1412,7 @@ export default function App() {
 
   const checkHealth = useCallback(async () => {
     try {
-      const res = await fetch('/health')
+      const res = await apiFetch('/health')
       if (res.ok) {
         const data = await res.json()
         setHealth({ api: data.status === 'healthy' ? 'ok' : 'error', db: data.db_status === 'ok' ? 'ok' : 'error' })
@@ -1412,7 +1434,7 @@ export default function App() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('/audits/run')
+      const res = await apiFetch('/audits/run')
       if (!res.ok) {
         const text = await res.text()
         throw new Error(`Server returned ${res.status}: ${text.slice(0, 200)}`)

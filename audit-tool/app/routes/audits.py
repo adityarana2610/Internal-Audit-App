@@ -15,7 +15,10 @@ from app.config import settings
 
 logger = logging.getLogger("audit_tool.routes")
 
-router = APIRouter()
+from app.auth import require_auth
+
+router = APIRouter(dependencies=[Depends(require_auth)])
+
 
 # Resolve templates directory relative to this file
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
@@ -89,11 +92,18 @@ class SettingsUpdate(BaseModel):
     ollama_base_url: str
     ollama_model: str
 
+def mask_secret(val: str) -> str:
+    # Completely obscures secret: returns empty or placeholder without leaking any characters
+    if not val:
+        return ""
+    return "••••••••••••••••"
+
 @router.get("/settings")
 def get_system_settings():
     return {
         "ai_provider": settings.ai_provider,
-        "gemini_api_key": settings.gemini_api_key,
+        "gemini_api_key": mask_secret(settings.gemini_api_key),
+        "gemini_api_key_configured": bool(settings.gemini_api_key),
         "gemini_model": settings.gemini_model,
         "ollama_base_url": settings.ollama_base_url,
         "ollama_model": settings.ollama_model,
@@ -102,7 +112,9 @@ def get_system_settings():
 @router.post("/settings")
 def update_system_settings(update: SettingsUpdate):
     settings.ai_provider = update.ai_provider
-    settings.gemini_api_key = update.gemini_api_key
+    new_key_supplied = update.gemini_api_key and not update.gemini_api_key.startswith("****") and "..." not in update.gemini_api_key
+    if new_key_supplied:
+        settings.gemini_api_key = update.gemini_api_key
     settings.gemini_model = update.gemini_model
     settings.ollama_base_url = update.ollama_base_url
     settings.ollama_model = update.ollama_model
@@ -120,7 +132,8 @@ def update_system_settings(update: SettingsUpdate):
             lines.append(f"{key}={val}\n")
 
         update_line("AI_PROVIDER", update.ai_provider)
-        update_line("GEMINI_API_KEY", update.gemini_api_key)
+        if new_key_supplied:
+            update_line("GEMINI_API_KEY", update.gemini_api_key)
         update_line("GEMINI_MODEL", update.gemini_model)
         update_line("OLLAMA_BASE_URL", update.ollama_base_url)
         update_line("OLLAMA_MODEL", update.ollama_model)

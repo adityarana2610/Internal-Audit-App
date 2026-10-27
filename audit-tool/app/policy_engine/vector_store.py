@@ -36,14 +36,38 @@ _qdrant_client: QdrantClient | None = None
 
 
 def get_qdrant_client() -> QdrantClient:
-    """Return a cached Qdrant client, creating it on first call."""
+    """
+    Return a verified Qdrant client.
+    - If settings.qdrant_host is ':memory:', returns an in-memory client.
+    - Otherwise connects to the real Qdrant cluster.
+    - If connection fails, raises RuntimeError without silent fallback to prevent data loss.
+    - Leaves client uncached on failure so recovery on subsequent requests is immediate.
+    """
     global _qdrant_client
     if _qdrant_client is None:
-        _qdrant_client = QdrantClient(":memory:")
-        logger.info("Connected to Qdrant (in-memory mode)")
+        if settings.qdrant_host == ":memory:":
+            logger.info("Using configured in-memory Qdrant instance.")
+            _qdrant_client = QdrantClient(":memory:")
+            return _qdrant_client
+
+        try:
+            client = QdrantClient(
+                host=settings.qdrant_host,
+                port=settings.qdrant_port,
+                timeout=4.0,
+            )
+            # Verify connectivity to the Qdrant cluster
+            client.get_collections()
+            logger.info(f"Connected to Qdrant vector database at {settings.qdrant_host}:{settings.qdrant_port}")
+            _qdrant_client = client
+        except Exception as exc:
+            logger.error(f"Failed to connect to Qdrant at {settings.qdrant_host}:{settings.qdrant_port}: {exc}")
+            raise RuntimeError(
+                f"Qdrant vector database is unavailable at {settings.qdrant_host}:{settings.qdrant_port}. "
+                "Ensure the Qdrant service is running and healthy."
+            ) from exc
+
     return _qdrant_client
-
-
 # ---------------------------------------------------------------------------
 # Collection management
 # ---------------------------------------------------------------------------
